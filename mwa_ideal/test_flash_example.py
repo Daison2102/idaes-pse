@@ -7,16 +7,22 @@ from idaes.core.util.model_statistics import degrees_of_freedom
 from idaes.models.unit_models import Flash
 
 try:
-    from mwa_ideal.mwa_ideal_class_property_package import MWAIdealParameterBlock
+    from mwa_ideal.mwa_ideal_generic_property_package_class import (
+        BASE_UNITS,
+        MWAClassGenericParameterBlock,
+    )
 except ModuleNotFoundError:
-    from mwa_ideal_class_property_package import MWAIdealParameterBlock
+    from mwa_ideal_generic_property_package_class import (
+        BASE_UNITS,
+        MWAClassGenericParameterBlock,
+    )
 
 
 def build_and_solve():
     m = ConcreteModel()
     m.fs = FlowsheetBlock(dynamic=False)
 
-    m.fs.props = MWAIdealParameterBlock()
+    m.fs.props = MWAClassGenericParameterBlock(base_units=BASE_UNITS)
     m.fs.flash = Flash(property_package=m.fs.props)
 
     # Inlet conditions from user
