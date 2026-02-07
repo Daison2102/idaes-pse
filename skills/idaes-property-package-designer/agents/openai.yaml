@@ -1,4 +1,0 @@
-interface:
-  display_name: "IDAES Property Package Designer"
-  short_description: "Design systematic workflows for IDAES property packages"
-  default_prompt: "Design and guide creation of IDAES property packages using generic and custom approaches."
