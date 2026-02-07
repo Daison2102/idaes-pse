@@ -15,6 +15,9 @@ Use this skill when the user needs to design or create an IDAES Property Package
 - Keep SKILL.md lean; load references only when needed.
 - Support both approaches and select based on requirements.
 - Use web search only when parameter values are missing and placeholders are needed.
+- Generic framework outputs must follow the enforced module and factory pattern in
+  `workflow/20_generic_build.md` and `assets/templates/generic_property_package.py`,
+  unless the user explicitly requests a different style.
 
 ## Source Priority (Strict)
 
@@ -81,3 +84,17 @@ For full decision logic, see `workflow/10_select_approach.md`.
 - Use templates in `assets/templates/` instead of writing code from scratch.
 - Include validation steps using the property harness.
 - Keep documentation modular and navigable.
+
+## Generic Output Standard
+
+For the Generic framework path, the default required format is:
+
+- module header with `# pylint: disable=all`
+- grouped imports in this order: Python stdlib, Pyomo units, IDAES cores/modules
+- logger setup and `EosType` enum
+- phase dictionaries (`_phase_dicts_pr`, `_phase_dicts_ideal`)
+- component master dictionary (`_component_params`)
+- factory builder function `get_prop(...)`
+- exported `configuration = get_prop(...)`
+
+If a user asks for a different style, document the deviation and proceed.

@@ -23,9 +23,14 @@ Use these tips with the `codebase` MCP (repo search) and `grounded-docs` MCP (of
 ## Suggested MCP search queries
 
 - "configuration = {" to find generic configuration dicts
+- "get_prop(" for factory-style generic package builders
+- "_phase_dicts_ideal" and "_phase_dicts_pr" for standard phase layout
+- "_component_params" for component master dictionaries
 - "phase_equilibrium_form" for VLE/LLE patterns
+- "phases_in_equilibrium" and "phase_equilibrium_state" for phase-state wiring
 - "equation_of_state_options" for EOS-specific options
 - "visc_d_phase" and "therm_cond_phase" for transport wiring
+- "viscosity_phi_ij_callback" for Wilke transport options
 - "define_metadata" for property metadata patterns
 - "get_material_flow_terms" for required interface methods
 
@@ -39,3 +44,10 @@ Use these tips with the `codebase` MCP (repo search) and `grounded-docs` MCP (of
 
 - Only when required data or examples are missing from codebase and grounded-docs
 - Use web search for placeholder parameter values and record sources
+
+## Compare-Against Pattern
+
+Before finalizing a generic package, compare your output against:
+
+- IDAES modular examples under `idaes/models/properties/modular_properties/examples/`
+- the enforced pattern in `assets/templates/generic_property_package.py`

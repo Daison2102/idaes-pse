@@ -2,53 +2,59 @@
 
 Use this when standard IDAES modular methods and EOS cover the needed properties.
 
+## Required Structure (Default)
+
+The generic path must use the enforced module pattern:
+
+1. Module skeleton:
+- start with `# pylint: disable=all`
+- import order: Python stdlib -> Pyomo units -> IDAES modules
+- define `_log = logging.getLogger(__name__)`
+
+2. EOS selection primitive:
+- define `EosType` enum with `PR` and `IDEAL`
+
+3. Phase dictionaries:
+- define `_phase_dicts_pr`
+- define `_phase_dicts_ideal`
+
+4. Component dictionary:
+- define `_component_params` with component methods and `parameter_data`
+- each parameter group must include source comments and units (or explicit unitless marker)
+
+5. Factory builder:
+- define `get_prop(components=None, phases=..., eos=..., scaled=False)`
+- builder must assemble `components`, `phases`, base units, state definition, bounds, references
+- if multiple phases selected, include equilibrium state mapping
+
+6. Export:
+- define module-level `configuration = get_prop(...)`
+
 ## Step-by-step checklist
 
-1. Create the configuration dict skeleton.
-- Use the template in `assets/templates/generic_property_package.py`.
+1. Copy the standards template.
+- Start from `assets/templates/generic_property_package.py` and keep section order.
 
-2. Define components.
-- Add each component under `components`.
-- Set `type`, `valid_phase_types`, and `elemental_composition`.
-- Assign pure-component property methods.
+2. Populate `_component_params`.
+- Add each component with `type`, `valid_phase_types`, composition, methods, and `parameter_data`.
+- For each parameter group, include source comment and validity range note where relevant.
 
-3. Define phases.
-- Add each phase under `phases`.
-- Set phase `type`.
-- Set `equation_of_state` per phase.
-- Add EOS options if required.
+3. Populate phase dicts.
+- Add EOS and transport choices in `_phase_dicts_pr` / `_phase_dicts_ideal`.
+- Add `transport_property_options` where needed (e.g. Wilke callback).
 
-4. Configure phase equilibrium.
-- Set `phase_equilibrium` mapping.
-- Add `phase_equilibrium_form` for components.
-- Add `phase_equilibrium_options` if needed.
+4. Implement `get_prop(...)`.
+- Select components/phases from master dicts via `copy.deepcopy`.
+- Add phase equilibrium entries when two-phase system is selected.
+- Add optional PR binary parameter defaults when `eos == EosType.PR`.
 
-5. Add parameter data.
-- Populate `parameter_data` for each component.
-- Include units and validity ranges.
-- Record sources for each parameter.
+5. Add module-level `configuration`.
+- Build a default configuration representative of intended use.
 
-6. Add transport properties.
-- Set `visc_d_phase` and `therm_cond_phase` per phase.
-- Add transport options and mixing rules.
-
-7. Choose and set the state definition.
-- Set `state_definition` to FTPx, FpcTP, etc.
-- Add any `state_bounds` if needed.
-
-8. Set base units.
-- Confirm unit consistency across all parameters.
-
-9. Add scaling.
-- Use default scaling where available.
-- Add custom scaling for key vars/constraints.
-
-10. Add initialization guidance.
-- Use IDAES initializer where possible.
-- Document any required initial guesses.
-
-11. Validate.
-- Run the harness tests and unit consistency checks.
+6. Validate structure and physics.
+- Construct `GenericParameterBlock(**configuration)`.
+- Run `assert_units_consistent` on a minimal model.
+- Run at least one minimal unit-model solve (Flash for VLE packages).
 
 ## Useful References
 
@@ -60,4 +66,4 @@ Use this when standard IDAES modular methods and EOS cover the needed properties
 
 ## Template
 
-Start from `assets/templates/generic_property_package.py`.
+Start from `assets/templates/generic_property_package.py` and preserve its section order.
