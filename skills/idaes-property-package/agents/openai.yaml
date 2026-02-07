@@ -1,0 +1,4 @@
+interface:
+  display_name: "IDAES Property Package"
+  short_description: "Help with IDAES property package tasks"
+  default_prompt: "Use $idaes-property-package to design an IDAES property package for my system."
