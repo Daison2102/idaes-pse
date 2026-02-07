@@ -7,7 +7,9 @@ Use this when you need full control over state variables, constraints, or proper
 1. Create the parameter block class.
 - Subclass `PhysicalParameterBlock`.
 - Define `component_list` and `phase_list`.
+- Assign the state block pointer (`state_block_class` / `_state_block_class`).
 - Add parameters and default values.
+- If required by intake, define `element_list` and `element_comp`.
 
 2. Create the state block class.
 - Subclass `StateBlock` and `StateBlockData`.
@@ -25,9 +27,11 @@ Use this when you need full control over state variables, constraints, or proper
 - `get_material_density_terms` if needed
 - `get_energy_density_terms` if needed
 
-5. Provide metadata.
-- Define the properties metadata.
-- Define default units.
+5. Provide metadata (required, not optional).
+- Implement `define_metadata`.
+- Define default units using `add_default_units(...)`.
+- Register all supported constructed properties using `add_properties(...)`.
+- Ensure every metadata property maps to an implemented variable/expression/method.
 
 6. Add scaling.
 - Apply scaling to state vars and constraints.
@@ -39,6 +43,16 @@ Use this when you need full control over state variables, constraints, or proper
 
 8. Validate.
 - Use the harness tests and unit checks.
+
+## PhysicalParameterBlock Compliance Gates
+
+Do not finalize a class-based package until all gates pass:
+
+1. Parameter block exposes `component_list` and `phase_list`.
+2. Parameter block sets state block linkage.
+3. If elemental balance is in scope, `element_list` and `element_comp` exist.
+4. `define_metadata` includes both units and property registrations.
+5. State block implements required interface methods referenced by unit models.
 
 ## Useful References
 

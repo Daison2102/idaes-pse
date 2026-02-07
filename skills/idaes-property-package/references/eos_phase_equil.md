@@ -1,35 +1,55 @@
 # EOS and Phase Equilibrium
 
-## Step-by-step checklist
+## EOS Selection Guidance
 
-1. Select EOS per phase.
-- Ideal for dilute or low-pressure systems.
-- Cubic (PR/SRK) for non-ideal VLE.
+1. Ideal EOS.
+- Best for ideal-gas/ideal-liquid assumptions and simpler problems.
+- Not suitable for all critical-property workflows.
 
-2. Select equilibrium formulation.
-- Fugacity-based is standard for VLE.
-- Confirm compatibility with EOS choice.
+2. Cubic EOS (PR/SRK).
+- Use for non-ideal VLE where fugacity behavior is important.
+- Requires package-level binary interaction parameters when applicable.
 
-3. Define phase pairs.
-- Identify which phase pairs equilibrate (e.g., Vap-Liq).
+## Equilibrium Configuration Triad (Required)
 
-4. Configure options.
-- Add EOS options if required.
-- Add equilibrium options if formulation requires.
+When equilibrium is enabled, configure all three:
 
-## EOS Options
+1. `phases_in_equilibrium`
+2. `phase_equilibrium_state`
+3. per-component `phase_equilibrium_form`
 
-- Ideal: simplest, use for dilute or low-pressure assumptions.
-- Cubic (PR, SRK): use for non-ideal vapor-liquid behavior.
+Missing any part leads to incomplete or inconsistent equilibrium setup.
 
-## Phase Equilibrium
+## Compatibility Matrix
 
-- Fugacity-based VLE is the standard pattern.
-- Use IDAES phase equilibrium forms for consistent formulation.
+1. Non-cubic EOS + VLE.
+- Recommended equilibrium-state method: `SmoothVLE`.
 
-## Codebase pointers
+2. Cubic EOS + VLE.
+- `SmoothVLE` is valid.
+- Cubic smooth/complementarity methods are valid only with cubic EOS.
 
-- EOS: `idaes/models/properties/modular_properties/eos/`
-- Phase equilibrium: `idaes/models/properties/modular_properties/phase_equil/`
+3. Ideal bubble/dew methods.
+- Use for two-phase ideal assumptions only.
+- For more complex multiphase behavior, use log-form/smooth formulations.
 
-Use the EOS per phase defined in the intake spec and match the phase equilibrium forms accordingly.
+## Required Package-Level Parameters
+
+1. Cubic EOS.
+- Include binary interaction matrix in top-level `parameter_data`
+  (e.g., `PR_kappa`/`SRK_kappa` style dict over component pairs).
+
+2. Any method with package-scoped options.
+- Keep package-level options in top-level config, not inside components.
+
+## Implementation Checks
+
+1. Each phase pair in `phases_in_equilibrium` has an entry in `phase_equilibrium_state`.
+2. Every component present in both phases of a pair defines the needed `phase_equilibrium_form`.
+3. EOS method supports fugacity behavior required by selected equilibrium form.
+
+## Codebase Pointers
+
+- EOS modules: `idaes/models/properties/modular_properties/eos/`
+- Phase-equilibrium forms/state methods: `idaes/models/properties/modular_properties/phase_equil/`
+- Bubble/dew methods: `idaes/models/properties/modular_properties/phase_equil/bubble_dew.py`

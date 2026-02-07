@@ -6,64 +6,126 @@ Use this when standard IDAES modular methods and EOS cover the needed properties
 
 The generic path must use the enforced module pattern:
 
-1. Module skeleton:
-- start with `# pylint: disable=all`
+1. Module skeleton.
+- `# pylint: disable=all`
 - import order: Python stdlib -> Pyomo units -> IDAES modules
-- define `_log = logging.getLogger(__name__)`
+- logger setup (`_log = logging.getLogger(__name__)`)
+- `EosType` enum for EOS routing
 
-2. EOS selection primitive:
-- define `EosType` enum with `PR` and `IDEAL`
+2. Master dictionaries.
+- `_phase_dicts_pr` and `_phase_dicts_ideal`
+- `_component_params`
+- optional helper dicts for transport callbacks and phase-scoped methods
 
-3. Phase dictionaries:
-- define `_phase_dicts_pr`
-- define `_phase_dicts_ideal`
+3. Factory builder.
+- `get_prop(components=None, phases=..., eos=..., scaled=False, ...)`
+- assemble top-level keys:
+  - `components`
+  - `phases`
+  - `base_units`
+  - `state_definition`
+  - `state_bounds`
+  - `pressure_ref`
+  - `temperature_ref`
 
-4. Component dictionary:
-- define `_component_params` with component methods and `parameter_data`
-- each parameter group must include source comments and units (or explicit unitless marker)
+4. Module export.
+- `configuration = get_prop(...)`
 
-5. Factory builder:
-- define `get_prop(components=None, phases=..., eos=..., scaled=False)`
-- builder must assemble `components`, `phases`, base units, state definition, bounds, references
-- if multiple phases selected, include equilibrium state mapping
+## Alternate Structure (On Explicit User Request Only)
 
-6. Export:
-- define module-level `configuration = get_prop(...)`
+Use this only if user asks for "generic framework using class definitions":
 
-## Step-by-step checklist
+1. Class declaration.
+- `@declare_process_block_class("UserParameterBlock")`
+- subclass `GenericParameterData`
 
-1. Copy the standards template.
-- Start from `assets/templates/generic_property_package.py` and keep section order.
+2. `configure(self)` method.
+- set configuration choices using `self.config.<option> = <value>`
+- set/confirm default units metadata if needed by selected methods
+- keep all required generic config keys (components, phases, state refs, units)
 
-2. Populate `_component_params`.
-- Add each component with `type`, `valid_phase_types`, composition, methods, and `parameter_data`.
-- For each parameter group, include source comment and validity range note where relevant.
+3. `parameters(self)` method.
+- define parameters required by selected methods
+- include units and physically sensible initial values/placeholders
+- use this for extra user parameters only; do not replace modular method internals
 
-3. Populate phase dicts.
-- Add EOS and transport choices in `_phase_dicts_pr` / `_phase_dicts_ideal`.
-- Add `transport_property_options` where needed (e.g. Wilke callback).
+## Generic Build Sequence
 
-4. Implement `get_prop(...)`.
-- Select components/phases from master dicts via `copy.deepcopy`.
-- Add phase equilibrium entries when two-phase system is selected.
-- Add optional PR binary parameter defaults when `eos == EosType.PR`.
+1. Copy the template.
+- Start from `assets/templates/generic_property_package.py`.
+- Preserve section order.
 
-5. Add module-level `configuration`.
-- Build a default configuration representative of intended use.
+2. Build phase dictionaries.
+- Assign `type` and `equation_of_state` for each phase.
+- Add `equation_of_state_options` where needed.
+- Add transport methods only if requested.
 
-6. Validate structure and physics.
-- Construct `GenericParameterBlock(**configuration)`.
-- Run `assert_units_consistent` on a minimal model.
-- Run at least one minimal unit-model solve (Flash for VLE packages).
+3. Build component dictionary.
+- Define `type`, `valid_phase_types`, pure methods, and `parameter_data`.
+- Include phase-equilibrium form only for components shared across equilibrium phase pairs.
+- Include explicit units (or explicit unitless marker).
+
+4. Wire phase equilibrium (only when requested).
+- Add `phases_in_equilibrium`.
+- Add `phase_equilibrium_state` matching each phase pair.
+- Ensure shared components provide `phase_equilibrium_form` entries.
+- For ideal two-phase bubble/dew usage, set bubble/dew method explicitly.
+
+5. Add global options.
+- Set `include_enthalpy_of_formation` explicitly when user preference is known.
+
+6. Add package-level parameter data.
+- Add binary interaction matrices (e.g., PR/SRK `kappa`) when required by EOS choice.
+
+7. Add guard checks.
+- Validate compatibility before returning configuration.
+- Raise `ConfigurationError` for incompatible EOS/equilibrium combinations.
+
+8. Export `configuration`.
+- Provide representative default call for expected usage.
+
+9. If class-definition option is selected.
+- implement `GenericParameterData` subclass instead of factory dict export
+- ensure `configure` and `parameters` cover all selected methods
+- if custom state equations/interfaces are required, switch to
+  `workflow/30_class_build.md` instead
+
+## Hard Validation Gates (Must Pass Before Output)
+
+1. Required key presence.
+- All top-level required keys are present.
+
+2. Compatibility checks.
+- EOS is compatible with selected equilibrium state method.
+- Bubble/dew method is compatible with selected phases and assumptions.
+
+3. Equilibrium consistency.
+- Every pair in `phases_in_equilibrium` has a matching entry in `phase_equilibrium_state`.
+- Shared components across phase pairs define `phase_equilibrium_form`.
+
+4. Method parameter completeness.
+- Every selected pure/transport method has required parameter placeholders or values.
+
+5. IDAES smoke checks.
+- `GenericParameterBlock(**configuration)` constructs.
+- Unit consistency check passes.
+- Minimal unit-model smoke solve is feasible for in-scope behavior.
+
+6. Class-definition option checks (if used).
+- class inherits from `GenericParameterData`
+- `configure` method sets all needed config options
+- `parameters` method defines required parameters for chosen methods
 
 ## Useful References
 
 - `references/generic_patterns.md`
 - `references/eos_phase_equil.md`
+- `references/state_definitions.md`
 - `references/transport_props.md`
 - `references/scaling_init.md`
 - `references/mcp_search_tips.md`
 
 ## Template
 
-Start from `assets/templates/generic_property_package.py` and preserve its section order.
+- Default: `assets/templates/generic_property_package.py`
+- On explicit class-definition request: `assets/templates/generic_property_package_class.py`

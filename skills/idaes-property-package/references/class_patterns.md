@@ -7,7 +7,9 @@
 
 2. Define the parameter block.
 - Subclass `PhysicalParameterBlock`.
-- Add component and phase sets.
+- Add component and phase sets (`component_list`, `phase_list`).
+- Set state block linkage (`state_block_class` or `_state_block_class`).
+- Add `element_list` and `element_comp` when elemental balances are required.
 - Add required parameters and defaults.
 
 3. Define the state block.
@@ -21,8 +23,10 @@
 - `get_material_density_terms` and `get_energy_density_terms` as needed.
 
 5. Define metadata.
-- Register properties.
-- Define default units.
+- Implement `define_metadata`.
+- Register properties with `add_properties(...)`.
+- Define default units with `add_default_units(...)`.
+- Keep metadata entries aligned with implemented variables/expressions.
 
 6. Add scaling and initialization.
 - Use IDAES scaling utilities.
@@ -45,3 +49,27 @@
 - `default_initializer` (optional but recommended)
 
 Use this when modular methods are insufficient or customization is heavy.
+
+## Canonical Minimal Pattern
+
+1. `PhysicalParameterBlock` subclass
+- declares `component_list` and `phase_list`
+- declares optional `element_list` and `element_comp`
+- assigns state block linkage
+- defines shared parameters
+
+2. `StateBlockData` subclass
+- defines state variables
+- defines property relations
+- implements required IDAES interface methods
+
+3. Metadata contract
+- `define_metadata` includes units and property registration
+- each registered property is constructible on the state block
+
+## Common Errors to Avoid
+
+- Missing state block linkage in parameter block.
+- Registering properties in metadata that are never constructed.
+- Omitting `element_list`/`element_comp` when elemental balances are expected.
+- Inconsistent phase/component indexing between parameters and constraints.

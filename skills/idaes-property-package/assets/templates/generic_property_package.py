@@ -1,52 +1,37 @@
 # pylint: disable=all
 
 # Import Python libraries
-import logging
 import copy
 import enum
+import logging
 
 # Import Pyomo units
 from pyomo.environ import units as pyunits
 
 # Import IDAES cores
-from idaes.core import VaporPhase, LiquidPhase, Component, PhaseType
+from idaes.core import Component, LiquidPhase, PhaseType, VaporPhase
+from idaes.core.util.exceptions import ConfigurationError
 
 from idaes.models.properties.modular_properties.state_definitions import FTPx
 from idaes.models.properties.modular_properties.eos.ceos import Cubic, CubicType
 from idaes.models.properties.modular_properties.eos.ideal import Ideal
-from idaes.models.properties.modular_properties.phase_equil.forms import (
-    fugacity,
-)
 from idaes.models.properties.modular_properties.phase_equil import SmoothVLE
-from idaes.models.properties.modular_properties.phase_equil.bubble_dew import (
-    IdealBubbleDew,
-)
+from idaes.models.properties.modular_properties.phase_equil.bubble_dew import IdealBubbleDew
+from idaes.models.properties.modular_properties.phase_equil.forms import fugacity
 from idaes.models.properties.modular_properties.pure import (
-    NIST,
-    RPP4,
-    RPP5,
-    Perrys,
     ChapmanEnskogLennardJones,
     Eucken,
-)
-from idaes.models.properties.modular_properties.base.generic_reaction import (
-    ConcentrationForm,
+    NIST,
+    Perrys,
 )
 from idaes.models.properties.modular_properties.transport_properties import (
-    ViscosityWilke,
-    ThermalConductivityWMS,
     NoMethod,
+    ThermalConductivityWMS,
+    ViscosityWilke,
 )
 from idaes.models.properties.modular_properties.transport_properties.viscosity_wilke import (
     wilke_phi_ij_callback,
 )
-
-from idaes.models.properties.modular_properties.reactions.dh_rxn import constant_dh_rxn
-from idaes.models.properties.modular_properties.reactions.rate_constant import arrhenius
-from idaes.models.properties.modular_properties.reactions.rate_forms import (
-    power_law_rate,
-)
-from idaes.core.util.exceptions import ConfigurationError
 
 # Set up logger
 _log = logging.getLogger(__name__)
@@ -59,8 +44,8 @@ class EosType(enum.Enum):
 
 # Property Sources
 #
-# Source: TODO add source
-# Properties: TODO list parameter groups sourced here
+# Source: TODO add source reference(s)
+# Properties: TODO list which parameter groups come from each source
 
 _phase_dicts_pr = {
     "Vap": {
@@ -84,9 +69,7 @@ _phase_dicts_ideal = {
         "type": VaporPhase,
         "equation_of_state": Ideal,
         "visc_d_phase": ViscosityWilke,
-        "transport_property_options": {
-            "viscosity_phi_ij_callback": wilke_phi_ij_callback,
-        },
+        "transport_property_options": {"viscosity_phi_ij_callback": wilke_phi_ij_callback},
         "therm_cond_phase": ThermalConductivityWMS,
     },
     "Liq": {
@@ -113,9 +96,9 @@ _component_params = {
         "visc_d_phase_comp": {"Vap": ChapmanEnskogLennardJones},
         "therm_cond_phase_comp": {"Vap": Eucken},
         "parameter_data": {
-            "mw": (0.0, pyunits.kg / pyunits.mol),  # TODO source + valid range
-            "pressure_crit": (0.0, pyunits.Pa),  # TODO source + valid range
-            "temperature_crit": (0.0, pyunits.K),  # TODO source + valid range
+            "mw": (0.0, pyunits.kg / pyunits.mol),  # TODO source + range
+            "pressure_crit": (0.0, pyunits.Pa),  # TODO source + range
+            "temperature_crit": (0.0, pyunits.K),  # TODO source + range
             "omega": 0.0,  # unitless
             "cp_mol_ig_comp_coeff": {
                 "A": 0.0,
@@ -143,13 +126,66 @@ _component_params = {
             "lennard_jones_epsilon_reduced": (0.0, pyunits.K),
             "f_int_eucken": 1,  # unitless
         },
-    },
+    }
 }
+
+
+def _validate_generic_choices(configuration, eos, phases):
+    """Validate generic framework compatibility before returning config."""
+    required_keys = (
+        "components",
+        "phases",
+        "base_units",
+        "state_definition",
+        "state_bounds",
+        "pressure_ref",
+        "temperature_ref",
+    )
+    missing = [k for k in required_keys if k not in configuration]
+    if missing:
+        raise ConfigurationError(f"Missing required generic configuration keys: {missing}")
+
+    # Equilibrium triad consistency checks.
+    if "phases_in_equilibrium" in configuration:
+        pairs = configuration["phases_in_equilibrium"]
+        pe_state = configuration.get("phase_equilibrium_state", {})
+        for p in pairs:
+            if p not in pe_state:
+                raise ConfigurationError(f"Missing phase_equilibrium_state for pair {p}.")
+            for comp, cobj in configuration["components"].items():
+                pe_form = cobj.get("phase_equilibrium_form", {})
+                if p[0] in phases and p[1] in phases:
+                    # Only require per-component form when component appears in both phases.
+                    if p not in pe_form:
+                        _log.debug(
+                            "Component %s does not define phase_equilibrium_form for pair %s.",
+                            comp,
+                            p,
+                        )
+
+    # Compatibility guard: ideal bubble/dew only in ideal two-phase assumptions.
+    if "bubble_dew_method" in configuration:
+        if eos != EosType.IDEAL or len(phases) != 2:
+            raise ConfigurationError(
+                "bubble_dew_method is configured but setup is not ideal two-phase."
+            )
+
+    # Placeholder completeness checks for common transport methods.
+    for comp, cdata in configuration["components"].items():
+        pdata = cdata.get("parameter_data", {})
+        if "visc_d_phase_comp" in cdata or "therm_cond_phase_comp" in cdata:
+            for required in ("lennard_jones_sigma", "lennard_jones_epsilon_reduced"):
+                if required not in pdata:
+                    raise ConfigurationError(
+                        f"Component {comp} missing transport parameter: {required}"
+                    )
 
 
 def get_prop(components=None, phases=("Vap", "Liq"), eos=EosType.IDEAL, scaled=False):
     if components is None:
         components = list(_component_params.keys())
+    if isinstance(phases, str):
+        phases = [phases]
 
     configuration = {
         "components": {},
@@ -170,23 +206,24 @@ def get_prop(components=None, phases=("Vap", "Liq"), eos=EosType.IDEAL, scaled=F
         },
         "pressure_ref": (101325, pyunits.Pa),
         "temperature_ref": (298.15, pyunits.K),
+        # Global behavior option (default true in IDAES docs).
+        "include_enthalpy_of_formation": True,
     }
 
-    if isinstance(phases, str):
-        phases = [phases]
-
-    c = configuration["components"]
+    # Populate components.
     for comp in components:
-        c[comp] = copy.deepcopy(_component_params[comp])
+        configuration["components"][comp] = copy.deepcopy(_component_params[comp])
 
+    # Populate phases.
     for p in phases:
         if eos == EosType.PR:
             configuration["phases"][p] = copy.deepcopy(_phase_dicts_pr[p])
         elif eos == EosType.IDEAL:
             configuration["phases"][p] = copy.deepcopy(_phase_dicts_ideal[p])
         else:
-            raise ValueError("Invalid EoS.")
+            raise ValueError("Invalid EoS selection.")
 
+    # Optional equilibrium block.
     if len(phases) > 1:
         p_tuple = tuple(phases)
         configuration["phases_in_equilibrium"] = [p_tuple]
@@ -194,22 +231,25 @@ def get_prop(components=None, phases=("Vap", "Liq"), eos=EosType.IDEAL, scaled=F
         if eos == EosType.IDEAL:
             configuration["bubble_dew_method"] = IdealBubbleDew
 
+    # EOS package-level parameters.
     if eos == EosType.PR:
-        d = configuration["parameter_data"]
-        d["PR_kappa"] = {(a, b): 0 for a in c for b in c}
+        configuration["parameter_data"]["PR_kappa"] = {
+            (a, b): 0.0 for a in components for b in components
+        }
 
+    # Optional base-unit scaling pattern.
     if scaled:
         configuration["base_units"]["mass"] = pyunits.Mg
         configuration["base_units"]["amount"] = pyunits.kmol
 
+    _validate_generic_choices(configuration, eos, phases)
     return configuration
 
 
-# Default exported configuration used by GenericParameterBlock(**configuration)
+# Default exported configuration for GenericParameterBlock(**configuration).
 configuration = get_prop(
     components=["COMP_A"],
     phases=("Vap", "Liq"),
     eos=EosType.IDEAL,
     scaled=False,
 )
-

@@ -1,77 +1,95 @@
 # Generic Property Package Patterns
 
-## Required Pattern (Default)
+## Canonical Module Pattern (Required)
 
-Use this as the canonical module layout unless user explicitly asks otherwise.
-
-1. Module header and imports:
+1. Header and imports.
 - `# pylint: disable=all`
-- Python stdlib imports (`logging`, `copy`, `enum`)
-- Pyomo units import
-- IDAES imports grouped by role
+- import order: stdlib -> pyomo units -> idaes modules
+- logger + `EosType` enum
 
-2. Core module scaffolding:
-- logger setup (`_log = logging.getLogger(__name__)`)
-- `EosType` enum for EOS routing
-
-3. Configuration architecture:
+2. Master dictionaries.
 - `_phase_dicts_pr`
 - `_phase_dicts_ideal`
 - `_component_params`
-- `get_prop(...)` builder
-- module-level `configuration = get_prop(...)`
 
-4. Data quality requirements:
-- use unit-bearing tuples in `parameter_data`
-- add source comments by parameter group
-- note validity ranges for key correlations where available
+3. Factory and export.
+- `get_prop(...)`
+- exported `configuration = get_prop(...)`
 
-5. Required equilibrium keys for two-phase systems:
-- `phases_in_equilibrium`
-- `phase_equilibrium_state`
-- `phase_equilibrium_form` on relevant components
+## Optional Class-Definition Pattern (Only On Explicit Request)
 
-## Step-by-step checklist
+1. Class definition.
+- `@declare_process_block_class("UserParameterBlock")`
+- subclass `GenericParameterData`
 
-1. Locate a close example in the codebase.
-- Start with `idaes/models/properties/modular_properties/`.
-- Prefer examples that match your phases and EOS.
+2. `configure(self)`.
+- assign selected options via `self.config.option = value`
 
-2. Copy the configuration dict structure.
-- Components, phases, equilibrium, transport, base units.
+3. `parameters(self)`.
+- define only parameters required by selected methods
+- add units and sensible defaults/placeholders
 
-3. Verify method availability.
-- Check that required pure component and transport methods exist.
-- Confirm compatible EOS and phase equilibrium forms.
+## Intent Mapping
 
-4. Populate parameter data.
-- Add `mw`, `pressure_crit`, `temperature_crit`, and method-specific coeffs.
-- Include units and sources.
+- "generic property package" -> Generic dict/factory pattern (default)
+- "generic using classes" -> Generic class-definition pattern
+- "custom equations/state block" -> Full class-based package (not generic)
 
-5. Validate the dict keys.
-- Ensure key names match IDAES expectations.
-- Ensure phase and component IDs are consistent.
+## Canonical Configuration Keys
 
-## Codebase Pointers
+- `components`
+- `phases`
+- `base_units`
+- `state_definition`
+- `state_bounds`
+- `pressure_ref`
+- `temperature_ref`
+- optional: `phases_in_equilibrium`, `phase_equilibrium_state`, `bubble_dew_method`
+- optional: top-level `parameter_data` for package-wide parameters (e.g., EOS binary interactions)
 
-- Modular properties: `idaes/models/properties/modular_properties/`
-- Example usages: `idaes/models/properties/modular_properties/examples/` (if present)
-- Phase equilibrium forms: `idaes/models/properties/modular_properties/phase_equil/`
-- Pure component methods: `idaes/models/properties/modular_properties/pure/`
+## Pattern Variants
 
-## Common Configuration Keys
+1. Single-phase non-equilibrium.
+- no `phases_in_equilibrium`
+- no `phase_equilibrium_state`
+- no per-component `phase_equilibrium_form`
 
-- `components` with `type`, `valid_phase_types`, method assignments, and `parameter_data`
-- `phases` with `type`, `equation_of_state`, and phase options
-- `phase_equilibrium_form` for VLE/LLE
-- `state_definition` and `state_bounds`
+2. Ideal/non-cubic VLE.
+- `phases_in_equilibrium` + `phase_equilibrium_state`
+- per-component `phase_equilibrium_form`
+- default equilibrium-state method: `SmoothVLE`
 
-Use methanol_ceos.py structure as the primary layout pattern.
+3. Cubic VLE.
+- cubic EOS in relevant phases
+- cubic-compatible equilibrium-state method if requested
+- package-level binary interactions (`PR_kappa`/`SRK_kappa` style)
+
+4. Vapor transport enabled.
+- phase uses `ViscosityWilke` and/or `ThermalConductivityWMS`
+- component methods provide required transport parameter keys
+- callback options set where needed (e.g., Wilke phi callback)
+
+## Compatibility and Completeness Checklist
+
+1. Equilibrium triad consistency.
+- each equilibrium pair appears in both `phases_in_equilibrium` and `phase_equilibrium_state`
+- each shared component has matching `phase_equilibrium_form`
+
+2. Method-parameter completeness.
+- pure method coefficients are present
+- transport parameters are present when transport is enabled
+- EOS-level package parameters are present when EOS requires them
+
+3. Phase/component consistency.
+- phase `component_list` (if used) is subset of package components
+- component `valid_phase_types` are compatible with included phases
 
 ## Common Errors
 
-- Missing units on numeric coefficients
-- Building `configuration` directly without a reusable `get_prop(...)` factory
-- Inconsistent import grouping/order
-- Missing equilibrium keys in multi-phase setups
-- EOS-specific keys mixed into wrong phase dictionary
+- Over-defining phase-equilibrium pairs in multi-equilibrium systems.
+- Missing per-component `phase_equilibrium_form` for shared components.
+- Enabling transport methods without required molecular parameters.
+- Choosing cubic-only equilibrium formulations with non-cubic EOS.
+- Omitting required top-level keys (`state_bounds`, references, units).
+- Using class-definition pattern without implementing both `configure` and `parameters`.
+- Trying to add full custom state equations in generic-class mode.
