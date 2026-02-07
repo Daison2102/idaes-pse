@@ -1,0 +1,33 @@
+"""Generic IDAES property package scaffold for {{PACKAGE_NAME}}."""
+
+from pyomo.environ import units as pyunits
+
+from idaes.core import Component, LiquidPhase, VaporPhase
+from idaes.models.properties.modular_properties.state_definitions import {{STATE_DEFINITION}}
+from idaes.models.properties.modular_properties.eos.ideal import Ideal
+from idaes.models.properties.modular_properties.phase_equil import SmoothVLE
+
+
+configuration = {
+    "components": {
+{{COMPONENT_BLOCK}}
+    },
+    "phases": {
+{{PHASE_BLOCK}}
+    },
+    "base_units": {
+        "time": pyunits.s,
+        "length": pyunits.m,
+        "mass": pyunits.kg,
+        "amount": pyunits.mol,
+        "temperature": pyunits.K,
+    },
+    "state_definition": {{STATE_DEFINITION}},
+    "state_bounds": {
+        "flow_mol": (1e-8, 1.0, 1e3, pyunits.mol / pyunits.s),
+        "temperature": (250, 300, 1200, pyunits.K),
+        "pressure": (1e3, 1e5, 1e7, pyunits.Pa),
+    },
+    "pressure_ref": (1e5, pyunits.Pa),
+    "temperature_ref": (298.15, pyunits.K),
+{{EQUILIBRIUM_BLOCK}}}
