@@ -1,0 +1,4 @@
+interface:
+  display_name: "IDAES Property Package Designer"
+  short_description: "Design IDAES property packages with repeatable steps"
+  default_prompt: "Use $idaes-property-package-designer to design an IDAES property package for my components, phases, EOS, and required properties."

@@ -1,0 +1,10 @@
+parameter_name,value,units,applies_to,source,retrieved_on,confidence,notes
+mw_comp.methanol,0.03204186,kg/mol,component:methanol,NIST WebBook (typical),2026-02-08,high,Standard molecular weight.
+mw_comp.water,0.01801528,kg/mol,component:water,NIST WebBook (typical),2026-02-08,high,Standard molecular weight.
+mw_comp.ammonia,0.01703052,kg/mol,component:ammonia,NIST WebBook (typical),2026-02-08,high,Standard molecular weight.
+cp_mol_liq_comp.methanol,81.1,J/mol/K,component:methanol,Engineering Toolbox/NIST typical liquid Cp,2026-02-08,medium,Representative value near ambient conditions.
+cp_mol_liq_comp.water,75.3,J/mol/K,component:water,IDAES saponification_thermo example constant Cp,2026-02-08,high,Matches common liquid-water Cp approximation in IDAES examples.
+cp_mol_liq_comp.ammonia,80.0,J/mol/K,component:ammonia,Placeholder from typical liquid-ammonia range,2026-02-08,low,Needs verification for specific pressure/temperature regime.
+dens_mol_liq_comp.methanol,24700,mol/m^3,component:methanol,Derived from rho~792 kg/m^3 and MW,2026-02-08,medium,Ambient-liquid approximation.
+dens_mol_liq_comp.water,55388,mol/m^3,component:water,IDAES saponification_thermo example,2026-02-08,high,Used broadly in dilute-liquid examples.
+dens_mol_liq_comp.ammonia,40000,mol/m^3,component:ammonia,Placeholder from typical liquid-ammonia density,2026-02-08,low,Needs verification for intended operating region.
