@@ -34,6 +34,7 @@ from pyomo.environ import (
     value,
     Var,
 )
+import math
 from pyomo.common.config import ConfigValue, In
 from pyomo.opt import SolverFactory
 from pyomo.util.calc_var_value import calculate_variable_from_constraint
@@ -448,7 +449,58 @@ class _MethanolWaterAmmoniaStateBlock(StateBlock):
 
         init_log.info_high("Step 2 - Teq init complete.")
 
-        # Step 3: Solve full system
+        # Step 3: Seed phase split/compositions from a Raoult+Rachford-Rice guess.
+        for k in blk.keys():
+            b = blk[k]
+            try:
+                phases = list(b.params.phase_list)
+                vap = next(
+                    (p for p in phases if b.params.get_phase(p).is_vapor_phase()),
+                    None,
+                )
+                liq = next(
+                    (p for p in phases if b.params.get_phase(p).is_liquid_phase()),
+                    None,
+                )
+                if vap is None or liq is None:
+                    continue
+
+                t = value(b.temperature)
+                p = value(b.pressure)
+                f = value(b.flow_mol)
+                if t is None or p is None or f is None:
+                    continue
+
+                comps = list(b.params.component_list)
+                z = _normalize_mole_fracs(
+                    {j: value(b.mole_frac_comp[j]) for j in comps}
+                )
+                p_safe = max(float(p), 1.0)
+                k_values = {}
+                for j in comps:
+                    a = value(b.params.pressure_sat_comp_coeff_A[j])
+                    bb = value(b.params.pressure_sat_comp_coeff_B[j])
+                    c = value(b.params.pressure_sat_comp_coeff_C[j])
+                    p_sat = math.exp(math.log(10.0) * (a - bb / (t + c))) * 1e5
+                    k_values[j] = max(1e-8, float(p_sat) / p_safe)
+
+                beta, x, y = _rachford_rice_split(z, k_values)
+                b.phase_frac[vap].set_value(beta)
+                b.phase_frac[liq].set_value(1.0 - beta)
+                b.flow_mol_phase[vap].set_value(max(0.0, f * beta))
+                b.flow_mol_phase[liq].set_value(max(0.0, f * (1.0 - beta)))
+                for j in comps:
+                    b.mole_frac_comp[j].set_value(z[j])
+                    if (liq, j) in b.params._phase_component_set:
+                        b.mole_frac_phase_comp[liq, j].set_value(x[j])
+                    if (vap, j) in b.params._phase_component_set:
+                        b.mole_frac_phase_comp[vap, j].set_value(y[j])
+            except Exception as err:
+                init_log.debug(f"Step 3 seeding skipped for {k}: {err}")
+
+        init_log.info_high("Step 3 - Phase-split seed complete.")
+
+        # Step 4: Solve full system
         if hasattr(solver, "solve"):
             opt = solver
         elif solver is None:
@@ -460,11 +512,16 @@ class _MethanolWaterAmmoniaStateBlock(StateBlock):
             opt.options = optarg
 
         free_vars = sum(number_unfixed_variables(blk[k]) for k in blk.keys())
-        if free_vars > 0:
+        dof = sum(degrees_of_freedom(blk[k]) for k in blk.keys())
+        if free_vars > 0 and dof == 0:
             with idaeslog.solver_log(solve_log, idaeslog.DEBUG) as slc:
                 res = solve_indexed_blocks(opt, [blk], tee=slc.tee)
             init_log.info(
-                f"Step 3 - Solve complete: {idaeslog.condition(res)}"
+                f"Step 4 - Solve complete: {idaeslog.condition(res)}"
+            )
+        elif free_vars > 0:
+            init_log.info_high(
+                f"Step 4 - Solve skipped (state block DOF = {dof})."
             )
 
         if not state_vars_fixed:
@@ -941,3 +998,49 @@ class MethanolWaterAmmoniaStateBlockData(StateBlockData):
         self.eq_mole_frac_tdew = Constraint(
             self.params.component_list, rule=rule_mole_frac_tdew
         )
+
+
+# ===========================================================================
+# Initialization helpers
+# ===========================================================================
+
+
+def _normalize_mole_fracs(fracs, eps=1e-12):
+    clipped = {j: max(eps, float(v)) for j, v in fracs.items()}
+    total = sum(clipped.values())
+    if total <= 0.0:
+        n = len(clipped)
+        return {j: 1.0 / n for j in clipped}
+    return {j: clipped[j] / total for j in clipped}
+
+
+def _rachford_rice_split(z, k, eps=1e-8):
+    """Return vapor fraction and phase compositions from z and K-values."""
+    f0 = sum(z[j] * (k[j] - 1.0) for j in z)
+    f1 = sum(z[j] * (k[j] - 1.0) / k[j] for j in z)
+
+    if f0 <= 0.0:
+        beta = eps
+    elif f1 >= 0.0:
+        beta = 1.0 - eps
+    else:
+        lo, hi = 0.0, 1.0
+        for _ in range(120):
+            beta = 0.5 * (lo + hi)
+            f = sum(
+                z[j] * (k[j] - 1.0) / (1.0 + beta * (k[j] - 1.0))
+                for j in z
+            )
+            if f > 0.0:
+                lo = beta
+            else:
+                hi = beta
+        beta = 0.5 * (lo + hi)
+
+    x = {j: z[j] / (1.0 + beta * (k[j] - 1.0)) for j in z}
+    x = _normalize_mole_fracs(x, eps=eps)
+
+    y = {j: k[j] * x[j] for j in z}
+    y = _normalize_mole_fracs(y, eps=eps)
+
+    return beta, x, y

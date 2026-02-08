@@ -108,3 +108,6 @@ Create a test script based on `templates/test_property_package.py` that:
   cubic EOS VLE systems
 - For cubic EOS, always include `PR_kappa` binary interaction parameters
   (can default to 0.0 for all pairs if unknown)
+- For class-based packages, place standalone helper/auxiliary functions
+  (especially initialization helpers) at the end of the module after class
+  definitions to match IDAES code-organization conventions

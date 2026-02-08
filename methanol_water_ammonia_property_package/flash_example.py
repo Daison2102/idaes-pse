@@ -11,7 +11,7 @@
 # for full copyright and license information.
 #################################################################################
 
-"""Small Flash example using the methanol-water-ammonia class-based property package."""
+"""Small Flash example using methanol_water_ammonia_ideal_vle_v2."""
 
 import pyomo.environ as pyo
 from pyomo.environ import value
@@ -39,15 +39,19 @@ def main():
 
     # Additional flash specifications required for a square problem
     m.fs.flash.inlet.pressure.fix(101325)
-    m.fs.flash.inlet.mole_frac_comp[0, "methanol"].fix(0.70)
-    m.fs.flash.inlet.mole_frac_comp[0, "water"].fix(0.28)
-    m.fs.flash.inlet.mole_frac_comp[0, "ammonia"].fix(0.02)
+    m.fs.flash.inlet.mole_frac_comp[0, "methanol"].fix(0.30)
+    m.fs.flash.inlet.mole_frac_comp[0, "water"].fix(0.50)
+    m.fs.flash.inlet.mole_frac_comp[0, "ammonia"].fix(0.20)
 
     print(f"Degrees of freedom: {degrees_of_freedom(m)}")
 
-    solver = get_solver(options={"max_iter": 2000})
+    solver = get_solver(options={"max_iter": 5000, "tol": 1e-7})
     if not solver.available(exception_flag=False):
         raise RuntimeError("No NLP solver available")
+
+    # Use unit-model initialization; property-state seeding is inside
+    # methanol_water_ammonia_ideal_vle_v2 initialize().
+    m.fs.flash.initialize(optarg={"max_iter": 5000, "tol": 1e-7})
 
     results = solver.solve(m, tee=False)
     term = str(results.solver.termination_condition)
