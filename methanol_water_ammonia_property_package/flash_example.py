@@ -21,7 +21,7 @@ from idaes.core.solvers import get_solver
 from idaes.core.util.model_statistics import degrees_of_freedom
 from idaes.models.unit_models import Flash
 
-from methanol_water_ammonia_ideal_vle import MethanolWaterAmmoniaParameterBlock
+from methanol_water_ammonia_ideal_vle_v2 import MethanolWaterAmmoniaParameterBlock
 
 
 def main():
