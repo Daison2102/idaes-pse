@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest --collect-only idaes/tests/test_import.py)",
+      "Bash(python -c:*)"
+    ]
+  }
+}
