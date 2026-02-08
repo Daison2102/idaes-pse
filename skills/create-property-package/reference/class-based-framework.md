@@ -2,21 +2,23 @@
 
 ## Overview
 
-A class-based property package requires implementing three classes manually:
+A class-based property package should implement four classes manually:
 
 1. **PhysicalParameterBlock subclass** - Defines components, phases, parameters
-2. **StateBlock container class** - Handles initialization for indexed blocks
-3. **StateBlockData subclass** - Implements state variables, properties, constraints
+2. **InitializerBase subclass** - Owns the full property initialization routine
+3. **StateBlock container class** - Defines block-wide helpers and default initializer
+4. **StateBlockData subclass** - Implements state variables, properties, constraints
 
 ## File Structure
 
-A single `.py` file containing all three classes, structured as:
+A single `.py` file containing all core classes, structured as:
 
 ```python
 # 1. Imports
 # 2. PhysicalParameterBlock subclass  (the "parameter block")
-# 3. StateBlock container class       (the "block class")
-# 4. StateBlockData subclass          (the "state block data")
+# 3. InitializerBase subclass         (property initialization logic)
+# 4. StateBlock container class       (the "block class")
+# 5. StateBlockData subclass          (the "state block data")
 ```
 
 ---
@@ -106,77 +108,58 @@ class MyParameterData(PhysicalParameterBlock):
 
 ---
 
-## Class 2: StateBlock Container
+## Class 2: InitializerBase Subclass
 
-This class handles operations on the entire indexed block (initialization,
-state release).
+Use an explicit initializer class (HDA-style) for the full initialization workflow.
+Put the full routine in `initialization_routine()` instead of `_MyStateBlock.initialize()`.
+
+```python
+class MyPropsInitializer(InitializerBase):
+    CONFIG = InitializerBase.CONFIG()
+    CONFIG.declare("solver", ConfigValue(default=None, domain=str))
+    CONFIG.declare("solver_options", ConfigValue(default=None))
+
+    def initialization_routine(self, blk):
+        init_log = idaeslog.getInitLogger(
+            blk.name, self.config.output_level, tag="properties"
+        )
+        solve_log = idaeslog.getSolveLogger(
+            blk.name, self.config.output_level, tag="properties"
+        )
+        solver = get_solver(self.config.solver, self.config.solver_options)
+
+        # 1) Initialize bubble/dew (if present)
+        # 2) Initialize equilibrium helper vars (if present)
+        # 3) Solve indexed state block if square
+        free_vars = sum(number_unfixed_variables(blk[k]) for k in blk.keys())
+        dof = sum(degrees_of_freedom(blk[k]) for k in blk.keys())
+        if free_vars > 0 and dof == 0:
+            with idaeslog.solver_log(solve_log, idaeslog.DEBUG) as slc:
+                res = solve_indexed_blocks(solver, [blk], tee=slc.tee)
+            init_log.info(f"Initialization complete: {idaeslog.condition(res)}")
+            return res
+        return None
+```
+
+## Class 3: StateBlock Container
+
+Keep this class focused on block-wide helpers and initializer wiring.
 
 ```python
 class _MyStateBlock(StateBlock):
-    """Methods applied to the whole indexed StateBlock."""
+    default_initializer = MyPropsInitializer
 
-    def initialize(
-        blk,
-        state_args=None,
-        state_vars_fixed=False,
-        hold_state=False,
-        outlvl=idaeslog.NOTSET,
-        solver="ipopt",
-        optarg=None,
-    ):
-        """Initialization routine."""
-        init_log = idaeslog.getInitLogger(blk.name, outlvl)
-        solve_log = idaeslog.getSolveLogger(blk.name, outlvl)
-
-        init_log.info("Starting initialization")
-
-        # Step 1: Fix state variables
-        if not state_vars_fixed:
-            flags = fix_state_vars(blk, state_args)
-
-        # Step 2: Initialize bubble/dew points (if VLE)
-        for k in blk.keys():
-            if hasattr(blk[k], "eq_temperature_bubble"):
-                calculate_variable_from_constraint(
-                    blk[k].temperature_bubble,
-                    blk[k].eq_temperature_bubble,
-                )
-            # ... similar for other bubble/dew constraints
-
-        # Step 3: Solve
-        opt = SolverFactory(solver)
-        if optarg:
-            opt.options = optarg
-
-        free_vars = sum(
-            number_unfixed_variables(blk[k]) for k in blk.keys()
-        )
-        if free_vars > 0:
-            with idaeslog.solver_log(solve_log, idaeslog.DEBUG) as slc:
-                res = solve_indexed_blocks(opt, [blk], tee=slc.tee)
-            init_log.info(f"Initialization complete: {idaeslog.condition(res)}")
-
-        # Step 4: Release or hold state
-        if not state_vars_fixed:
-            if hold_state:
-                return flags
-            else:
-                blk.release_state(flags)
-
-        init_log.info("Initialization Complete")
-
-    def release_state(blk, flags, outlvl=idaeslog.NOTSET):
-        """Release state variables fixed during initialization."""
-        init_log = idaeslog.getInitLogger(blk.name, outlvl)
-        if flags is None:
-            return
-        revert_state_vars(blk, flags)
-        init_log.info_high("State Released.")
+    def fix_initialization_states(self):
+        fix_state_vars(self)
+        for b in self.values():
+            if b.config.defined_state is False:
+                j = b.params.component_list.last()
+                b.mole_frac_comp[j].unfix()
 ```
 
 ---
 
-## Class 3: StateBlockData
+## Class 4: StateBlockData
 
 This is where all the actual thermodynamic calculations happen.
 
@@ -381,7 +364,6 @@ from pyomo.environ import (
     NonNegativeReals, Param, Set, units as pyunits, value, Var,
 )
 from pyomo.common.config import ConfigValue, In
-from pyomo.opt import SolverFactory
 from pyomo.util.calc_var_value import calculate_variable_from_constraint
 
 from idaes.core import (
@@ -396,9 +378,10 @@ from idaes.core import (
     VaporPhase,
     Component,
 )
+from idaes.core.initialization import InitializerBase
+from idaes.core.solvers import get_solver
 from idaes.core.util.initialization import (
     fix_state_vars,
-    revert_state_vars,
     solve_indexed_blocks,
 )
 from idaes.core.util.model_statistics import (

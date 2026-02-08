@@ -42,7 +42,6 @@ from pyomo.environ import (
     Var,
 )
 from pyomo.common.config import ConfigValue, In
-from pyomo.opt import SolverFactory
 from pyomo.util.calc_var_value import calculate_variable_from_constraint
 
 from idaes.core import (
@@ -57,9 +56,10 @@ from idaes.core import (
     VaporPhase,
     Component,
 )
+from idaes.core.initialization import InitializerBase
+from idaes.core.solvers import get_solver
 from idaes.core.util.initialization import (
     fix_state_vars,
-    revert_state_vars,
     solve_indexed_blocks,
 )
 from idaes.core.util.model_statistics import (
@@ -70,6 +70,88 @@ from idaes.core.util.constants import Constants
 import idaes.logger as idaeslog
 
 _log = idaeslog.getLogger(__name__)
+
+
+class MethanolWaterAmmoniaInitializer(InitializerBase):
+    """Initializer for methanol-water-ammonia property package."""
+
+    CONFIG = InitializerBase.CONFIG()
+    CONFIG.declare(
+        "solver",
+        ConfigValue(default=None, domain=str, description="Initialization solver"),
+    )
+    CONFIG.declare(
+        "solver_options",
+        ConfigValue(default=None, description="Initialization solver options"),
+    )
+
+    def initialization_routine(self, blk):
+        init_log = idaeslog.getInitLogger(
+            blk.name, self.config.output_level, tag="properties"
+        )
+        solve_log = idaeslog.getSolveLogger(
+            blk.name, self.config.output_level, tag="properties"
+        )
+        solver = get_solver(self.config.solver, self.config.solver_options)
+
+        init_log.info("Starting initialization")
+
+        # Step 1: Initialize bubble/dew points from constraints
+        for k in blk.keys():
+            if hasattr(blk[k], "eq_temperature_bubble"):
+                calculate_variable_from_constraint(
+                    blk[k].temperature_bubble,
+                    blk[k].eq_temperature_bubble,
+                )
+            if hasattr(blk[k], "eq_mole_frac_tbub"):
+                for j in blk[k].params.component_list:
+                    calculate_variable_from_constraint(
+                        blk[k]._mole_frac_tbub[j],
+                        blk[k].eq_mole_frac_tbub[j],
+                    )
+            if hasattr(blk[k], "eq_temperature_dew"):
+                calculate_variable_from_constraint(
+                    blk[k].temperature_dew,
+                    blk[k].eq_temperature_dew,
+                )
+            if hasattr(blk[k], "eq_mole_frac_tdew"):
+                for j in blk[k].params.component_list:
+                    calculate_variable_from_constraint(
+                        blk[k]._mole_frac_tdew[j],
+                        blk[k].eq_mole_frac_tdew[j],
+                    )
+
+        init_log.info_high("Step 1 - Bubble/dew point init complete.")
+
+        # Step 2: Initialize equilibrium temperature
+        for k in blk.keys():
+            if hasattr(blk[k], "_t1"):
+                blk[k]._t1.value = max(
+                    blk[k].temperature.value, blk[k].temperature_bubble.value
+                )
+                blk[k]._teq.value = min(
+                    blk[k]._t1.value, blk[k].temperature_dew.value
+                )
+
+        init_log.info_high("Step 2 - Teq init complete.")
+
+        # Step 3: Solve full state block if square
+        res = None
+        free_vars = sum(number_unfixed_variables(blk[k]) for k in blk.keys())
+        dof = sum(degrees_of_freedom(blk[k]) for k in blk.keys())
+        if free_vars > 0 and dof == 0:
+            with idaeslog.solver_log(solve_log, idaeslog.DEBUG) as slc:
+                res = solve_indexed_blocks(solver, [blk], tee=slc.tee)
+            init_log.info(
+                f"Step 3 - Solve complete: {idaeslog.condition(res)}"
+            )
+        elif free_vars > 0:
+            init_log.info_high(
+                f"Step 3 - Solve skipped (state block DOF = {dof})."
+            )
+
+        init_log.info("Initialization Complete")
+        return res
 
 
 # ===========================================================================
@@ -434,89 +516,15 @@ class MethanolWaterAmmoniaParameterData(PhysicalParameterBlock):
 class _MethanolWaterAmmoniaStateBlock(StateBlock):
     """Methods applied to the whole indexed StateBlock."""
 
-    def initialize(
-        blk,
-        state_args=None,
-        state_vars_fixed=False,
-        hold_state=False,
-        outlvl=idaeslog.NOTSET,
-        solver="ipopt",
-        optarg=None,
-    ):
-        init_log = idaeslog.getInitLogger(blk.name, outlvl)
-        solve_log = idaeslog.getSolveLogger(blk.name, outlvl)
+    default_initializer = MethanolWaterAmmoniaInitializer
 
-        init_log.info("Starting initialization")
-
-        if not state_vars_fixed:
-            flags = fix_state_vars(blk, state_args)
-
-        # Step 1: Initialize bubble/dew points from constraints
-        for k in blk.keys():
-            if hasattr(blk[k], "eq_temperature_bubble"):
-                calculate_variable_from_constraint(
-                    blk[k].temperature_bubble,
-                    blk[k].eq_temperature_bubble,
-                )
-            if hasattr(blk[k], "eq_mole_frac_tbub"):
-                for j in blk[k].params.component_list:
-                    calculate_variable_from_constraint(
-                        blk[k]._mole_frac_tbub[j],
-                        blk[k].eq_mole_frac_tbub[j],
-                    )
-            if hasattr(blk[k], "eq_temperature_dew"):
-                calculate_variable_from_constraint(
-                    blk[k].temperature_dew,
-                    blk[k].eq_temperature_dew,
-                )
-            if hasattr(blk[k], "eq_mole_frac_tdew"):
-                for j in blk[k].params.component_list:
-                    calculate_variable_from_constraint(
-                        blk[k]._mole_frac_tdew[j],
-                        blk[k].eq_mole_frac_tdew[j],
-                    )
-
-        init_log.info_high("Step 1 - Bubble/dew point init complete.")
-
-        # Step 2: Initialize equilibrium temperature
-        for k in blk.keys():
-            if hasattr(blk[k], "_t1"):
-                blk[k]._t1.value = max(
-                    blk[k].temperature.value, blk[k].temperature_bubble.value
-                )
-                blk[k]._teq.value = min(
-                    blk[k]._t1.value, blk[k].temperature_dew.value
-                )
-
-        init_log.info_high("Step 2 - Teq init complete.")
-
-        # Step 3: Solve full system
-        opt = SolverFactory(solver)
-        if optarg:
-            opt.options = optarg
-
-        free_vars = sum(number_unfixed_variables(blk[k]) for k in blk.keys())
-        if free_vars > 0:
-            with idaeslog.solver_log(solve_log, idaeslog.DEBUG) as slc:
-                res = solve_indexed_blocks(opt, [blk], tee=slc.tee)
-            init_log.info(
-                f"Step 3 - Solve complete: {idaeslog.condition(res)}"
-            )
-
-        if not state_vars_fixed:
-            if hold_state:
-                return flags
-            else:
-                blk.release_state(flags)
-
-        init_log.info("Initialization Complete")
-
-    def release_state(blk, flags, outlvl=idaeslog.NOTSET):
-        init_log = idaeslog.getInitLogger(blk.name, outlvl)
-        if flags is None:
-            return
-        revert_state_vars(blk, flags)
-        init_log.info_high("State Released.")
+    def fix_initialization_states(blk):
+        """Fix state vars and free one composition for defined_state=False blocks."""
+        fix_state_vars(blk)
+        for b in blk.values():
+            if b.config.defined_state is False:
+                j = b.params.component_list.last()
+                b.mole_frac_comp[j].unfix()
 
 
 # ===========================================================================

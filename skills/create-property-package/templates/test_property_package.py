@@ -112,7 +112,8 @@ class TestGenericPropertyPackage:
 
     def test_initialize(self, model):
         """Initialization should converge without errors."""
-        model.fs.state.initialize(outlvl=idaeslog.WARNING)
+        initializer = model.fs.state.default_initializer()
+        initializer.initialize(model.fs.state, output_level=idaeslog.WARNING)
 
     def test_solve(self, model):
         """Solver should find an optimal solution."""

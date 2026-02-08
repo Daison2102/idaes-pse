@@ -66,7 +66,12 @@ Every parameter value MUST include:
 2. Follow `reference/class-based-framework.md` for the required structure
 3. Implement all 8 required StateBlockData contract methods
 4. Implement property calculation methods
-5. Add initialization routine
+5. Add initialization routine using the IDAES class-initializer standard:
+   - Define a dedicated `InitializerBase` subclass (e.g., `MyPropsInitializer`)
+   - Put the full property initialization workflow in `initialization_routine()`
+   - Set `_StateBlock.default_initializer = MyPropsInitializer`
+   - Keep `fix_initialization_states()` in `_StateBlock` for initializer compatibility
+   - Do not place the primary initialization workflow in `_StateBlock.initialize()`
 6. Add scaling hints
 
 ### Import paths (IDAES v2.11+):
@@ -111,3 +116,6 @@ Create a test script based on `templates/test_property_package.py` that:
 - For class-based packages, place standalone helper/auxiliary functions
   (especially initialization helpers) at the end of the module after class
   definitions to match IDAES code-organization conventions
+- For class-based packages, follow HDA-style initialization wiring:
+  `InitializerBase` class owns the full initialization sequence and
+  `_StateBlock.default_initializer` points to that class

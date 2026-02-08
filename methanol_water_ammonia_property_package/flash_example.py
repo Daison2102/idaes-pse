@@ -20,6 +20,7 @@ from idaes.core import FlowsheetBlock
 from idaes.core.solvers import get_solver
 from idaes.core.util.model_statistics import degrees_of_freedom
 from idaes.models.unit_models import Flash
+import idaes.logger as idaeslog
 
 from methanol_water_ammonia_ideal_vle_v2 import MethanolWaterAmmoniaParameterBlock
 
@@ -49,9 +50,9 @@ def main():
     if not solver.available(exception_flag=False):
         raise RuntimeError("No NLP solver available")
 
-    # Use unit-model initialization; property-state seeding is inside
-    # methanol_water_ammonia_ideal_vle_v2 initialize().
-    m.fs.flash.initialize(optarg={"max_iter": 5000, "tol": 1e-7})
+    # Initialize model with the unit's default initializer.
+    initializer = m.fs.flash.default_initializer()
+    initializer.initialize(m.fs.flash, output_level=idaeslog.INFO_HIGH)
 
     results = solver.solve(m, tee=False)
     term = str(results.solver.termination_condition)

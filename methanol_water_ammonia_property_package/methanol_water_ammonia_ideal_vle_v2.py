@@ -36,7 +36,6 @@ from pyomo.environ import (
 )
 import math
 from pyomo.common.config import ConfigValue, In
-from pyomo.opt import SolverFactory
 from pyomo.util.calc_var_value import calculate_variable_from_constraint
 
 from idaes.core import (
@@ -51,10 +50,10 @@ from idaes.core import (
     VaporPhase,
     Component,
 )
+from idaes.core.initialization import InitializerBase
 from idaes.core.solvers import get_solver
 from idaes.core.util.initialization import (
     fix_state_vars,
-    revert_state_vars,
     solve_indexed_blocks,
 )
 from idaes.core.util.model_statistics import (
@@ -65,6 +64,139 @@ from idaes.core.util.constants import Constants
 import idaes.logger as idaeslog
 
 _log = idaeslog.getLogger(__name__)
+
+
+class MethanolWaterAmmoniaInitializer(InitializerBase):
+    """Initializer for the methanol-water-ammonia property package."""
+
+    CONFIG = InitializerBase.CONFIG()
+    CONFIG.declare(
+        "solver",
+        ConfigValue(default=None, domain=str, description="Initialization solver"),
+    )
+    CONFIG.declare(
+        "solver_options",
+        ConfigValue(default=None, description="Initialization solver options"),
+    )
+
+    def initialization_routine(self, blk):
+        init_log = idaeslog.getInitLogger(
+            blk.name, self.config.output_level, tag="properties"
+        )
+        solve_log = idaeslog.getSolveLogger(
+            blk.name, self.config.output_level, tag="properties"
+        )
+        solver = get_solver(self.config.solver, self.config.solver_options)
+
+        init_log.info("Starting initialization")
+
+        # Step 1: Initialize bubble/dew points from constraints
+        for k in blk.keys():
+            if hasattr(blk[k], "eq_temperature_bubble"):
+                calculate_variable_from_constraint(
+                    blk[k].temperature_bubble,
+                    blk[k].eq_temperature_bubble,
+                )
+            if hasattr(blk[k], "eq_mole_frac_tbub"):
+                for j in blk[k].params.component_list:
+                    calculate_variable_from_constraint(
+                        blk[k]._mole_frac_tbub[j],
+                        blk[k].eq_mole_frac_tbub[j],
+                    )
+            if hasattr(blk[k], "eq_temperature_dew"):
+                calculate_variable_from_constraint(
+                    blk[k].temperature_dew,
+                    blk[k].eq_temperature_dew,
+                )
+            if hasattr(blk[k], "eq_mole_frac_tdew"):
+                for j in blk[k].params.component_list:
+                    calculate_variable_from_constraint(
+                        blk[k]._mole_frac_tdew[j],
+                        blk[k].eq_mole_frac_tdew[j],
+                    )
+
+        init_log.info_high("Step 1 - Bubble/dew point init complete.")
+
+        # Step 2: Initialize equilibrium temperature
+        for k in blk.keys():
+            if hasattr(blk[k], "_t1"):
+                blk[k]._t1.value = max(
+                    blk[k].temperature.value, blk[k].temperature_bubble.value
+                )
+                blk[k]._teq.value = min(
+                    blk[k]._t1.value, blk[k].temperature_dew.value
+                )
+
+        init_log.info_high("Step 2 - Teq init complete.")
+
+        # Step 3: Seed phase split/compositions from a Raoult+Rachford-Rice guess.
+        for k in blk.keys():
+            b = blk[k]
+            try:
+                phases = list(b.params.phase_list)
+                vap = next(
+                    (p for p in phases if b.params.get_phase(p).is_vapor_phase()),
+                    None,
+                )
+                liq = next(
+                    (p for p in phases if b.params.get_phase(p).is_liquid_phase()),
+                    None,
+                )
+                if vap is None or liq is None:
+                    continue
+
+                t = value(b.temperature)
+                p = value(b.pressure)
+                f = value(b.flow_mol)
+                if t is None or p is None or f is None:
+                    continue
+
+                comps = list(b.params.component_list)
+                z = _normalize_mole_fracs(
+                    {j: value(b.mole_frac_comp[j]) for j in comps}
+                )
+                p_safe = max(float(p), 1.0)
+                k_values = {}
+                for j in comps:
+                    a = value(b.params.pressure_sat_comp_coeff_A[j])
+                    bb = value(b.params.pressure_sat_comp_coeff_B[j])
+                    c = value(b.params.pressure_sat_comp_coeff_C[j])
+                    p_sat = math.exp(math.log(10.0) * (a - bb / (t + c))) * 1e5
+                    k_values[j] = max(1e-8, float(p_sat) / p_safe)
+
+                beta, x, y = _rachford_rice_split(z, k_values)
+                b.phase_frac[vap].set_value(beta)
+                b.phase_frac[liq].set_value(1.0 - beta)
+                b.flow_mol_phase[vap].set_value(max(0.0, f * beta))
+                b.flow_mol_phase[liq].set_value(max(0.0, f * (1.0 - beta)))
+                for j in comps:
+                    b.mole_frac_comp[j].set_value(z[j])
+                    if (liq, j) in b.params._phase_component_set:
+                        b.mole_frac_phase_comp[liq, j].set_value(x[j])
+                    if (vap, j) in b.params._phase_component_set:
+                        b.mole_frac_phase_comp[vap, j].set_value(y[j])
+            except Exception as err:
+                init_log.debug(f"Step 3 seeding skipped for {k}: {err}")
+
+        init_log.info_high("Step 3 - Phase-split seed complete.")
+
+        # Step 4: Solve full state block if square.
+        res = None
+        free_vars = sum(number_unfixed_variables(blk[k]) for k in blk.keys())
+        dof = sum(degrees_of_freedom(blk[k]) for k in blk.keys())
+        if free_vars > 0 and dof == 0:
+            with idaeslog.solver_log(solve_log, idaeslog.DEBUG) as slc:
+                res = solve_indexed_blocks(solver, [blk], tee=slc.tee)
+            init_log.info(
+                f"Step 4 - Solve complete: {idaeslog.condition(res)}"
+            )
+        elif free_vars > 0:
+            init_log.info_high(
+                f"Step 4 - Solve skipped (state block DOF = {dof})."
+            )
+
+        init_log.info("Initialization Complete")
+        return res
 
 
 # ===========================================================================
@@ -393,151 +525,15 @@ class MethanolWaterAmmoniaParameterData(PhysicalParameterBlock):
 class _MethanolWaterAmmoniaStateBlock(StateBlock):
     """Methods applied to the whole indexed StateBlock."""
 
-    def initialize(
-        blk,
-        state_args=None,
-        state_vars_fixed=False,
-        hold_state=False,
-        outlvl=idaeslog.NOTSET,
-        solver="ipopt",
-        optarg=None,
-    ):
-        init_log = idaeslog.getInitLogger(blk.name, outlvl)
-        solve_log = idaeslog.getSolveLogger(blk.name, outlvl)
+    default_initializer = MethanolWaterAmmoniaInitializer
 
-        init_log.info("Starting initialization")
-
-        if not state_vars_fixed:
-            flags = fix_state_vars(blk, state_args)
-
-        # Step 1: Initialize bubble/dew points from constraints
-        for k in blk.keys():
-            if hasattr(blk[k], "eq_temperature_bubble"):
-                calculate_variable_from_constraint(
-                    blk[k].temperature_bubble,
-                    blk[k].eq_temperature_bubble,
-                )
-            if hasattr(blk[k], "eq_mole_frac_tbub"):
-                for j in blk[k].params.component_list:
-                    calculate_variable_from_constraint(
-                        blk[k]._mole_frac_tbub[j],
-                        blk[k].eq_mole_frac_tbub[j],
-                    )
-            if hasattr(blk[k], "eq_temperature_dew"):
-                calculate_variable_from_constraint(
-                    blk[k].temperature_dew,
-                    blk[k].eq_temperature_dew,
-                )
-            if hasattr(blk[k], "eq_mole_frac_tdew"):
-                for j in blk[k].params.component_list:
-                    calculate_variable_from_constraint(
-                        blk[k]._mole_frac_tdew[j],
-                        blk[k].eq_mole_frac_tdew[j],
-                    )
-
-        init_log.info_high("Step 1 - Bubble/dew point init complete.")
-
-        # Step 2: Initialize equilibrium temperature
-        for k in blk.keys():
-            if hasattr(blk[k], "_t1"):
-                blk[k]._t1.value = max(
-                    blk[k].temperature.value, blk[k].temperature_bubble.value
-                )
-                blk[k]._teq.value = min(
-                    blk[k]._t1.value, blk[k].temperature_dew.value
-                )
-
-        init_log.info_high("Step 2 - Teq init complete.")
-
-        # Step 3: Seed phase split/compositions from a Raoult+Rachford-Rice guess.
-        for k in blk.keys():
-            b = blk[k]
-            try:
-                phases = list(b.params.phase_list)
-                vap = next(
-                    (p for p in phases if b.params.get_phase(p).is_vapor_phase()),
-                    None,
-                )
-                liq = next(
-                    (p for p in phases if b.params.get_phase(p).is_liquid_phase()),
-                    None,
-                )
-                if vap is None or liq is None:
-                    continue
-
-                t = value(b.temperature)
-                p = value(b.pressure)
-                f = value(b.flow_mol)
-                if t is None or p is None or f is None:
-                    continue
-
-                comps = list(b.params.component_list)
-                z = _normalize_mole_fracs(
-                    {j: value(b.mole_frac_comp[j]) for j in comps}
-                )
-                p_safe = max(float(p), 1.0)
-                k_values = {}
-                for j in comps:
-                    a = value(b.params.pressure_sat_comp_coeff_A[j])
-                    bb = value(b.params.pressure_sat_comp_coeff_B[j])
-                    c = value(b.params.pressure_sat_comp_coeff_C[j])
-                    p_sat = math.exp(math.log(10.0) * (a - bb / (t + c))) * 1e5
-                    k_values[j] = max(1e-8, float(p_sat) / p_safe)
-
-                beta, x, y = _rachford_rice_split(z, k_values)
-                b.phase_frac[vap].set_value(beta)
-                b.phase_frac[liq].set_value(1.0 - beta)
-                b.flow_mol_phase[vap].set_value(max(0.0, f * beta))
-                b.flow_mol_phase[liq].set_value(max(0.0, f * (1.0 - beta)))
-                for j in comps:
-                    b.mole_frac_comp[j].set_value(z[j])
-                    if (liq, j) in b.params._phase_component_set:
-                        b.mole_frac_phase_comp[liq, j].set_value(x[j])
-                    if (vap, j) in b.params._phase_component_set:
-                        b.mole_frac_phase_comp[vap, j].set_value(y[j])
-            except Exception as err:
-                init_log.debug(f"Step 3 seeding skipped for {k}: {err}")
-
-        init_log.info_high("Step 3 - Phase-split seed complete.")
-
-        # Step 4: Solve full system
-        if hasattr(solver, "solve"):
-            opt = solver
-        elif solver is None:
-            opt = get_solver()
-        else:
-            opt = SolverFactory(solver)
-
-        if optarg and hasattr(opt, "options"):
-            opt.options = optarg
-
-        free_vars = sum(number_unfixed_variables(blk[k]) for k in blk.keys())
-        dof = sum(degrees_of_freedom(blk[k]) for k in blk.keys())
-        if free_vars > 0 and dof == 0:
-            with idaeslog.solver_log(solve_log, idaeslog.DEBUG) as slc:
-                res = solve_indexed_blocks(opt, [blk], tee=slc.tee)
-            init_log.info(
-                f"Step 4 - Solve complete: {idaeslog.condition(res)}"
-            )
-        elif free_vars > 0:
-            init_log.info_high(
-                f"Step 4 - Solve skipped (state block DOF = {dof})."
-            )
-
-        if not state_vars_fixed:
-            if hold_state:
-                return flags
-            else:
-                blk.release_state(flags)
-
-        init_log.info("Initialization Complete")
-
-    def release_state(blk, flags, outlvl=idaeslog.NOTSET):
-        init_log = idaeslog.getInitLogger(blk.name, outlvl)
-        if flags is None:
-            return
-        revert_state_vars(blk, flags)
-        init_log.info_high("State Released.")
+    def fix_initialization_states(self):
+        """Fix state variables for compatibility with IDAES initializer objects."""
+        fix_state_vars(self)
+        for b in self.values():
+            if b.config.defined_state is False:
+                j = b.params.component_list.last()
+                b.mole_frac_comp[j].unfix()
 
 
 # ===========================================================================

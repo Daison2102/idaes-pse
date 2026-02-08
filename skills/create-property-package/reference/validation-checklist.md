@@ -66,7 +66,8 @@ assert degrees_of_freedom(m.state[0]) == 0
 ## 5. Initialization
 
 ```python
-m.state.initialize(outlvl=idaeslog.INFO)
+initializer = m.state.default_initializer()
+initializer.initialize(m.state, output_level=idaeslog.INFO)
 ```
 
 - [ ] Initialization completes without exceptions
