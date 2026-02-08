@@ -1,0 +1,4 @@
+interface:
+  display_name: "IDAES Property Package Builder"
+  short_description: "Create robust IDAES property packages"
+  default_prompt: "Use $create-property-package to design an IDAES property package from my component, phase, EOS, and property requirements."
